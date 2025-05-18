@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TopiaBets Beatmaker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; font-family: sans-serif; }
+    #overlay {
+      position: fixed; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: #111;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      z-index: 9999;
+    }
+    #header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 1rem;
+      background: #222;
+      box-shadow: 0 2px 5px #000;
+    }
+    #header h1 { font-size: 1.5rem; }
+    #closeBtn {
+      background: transparent; border: none;
+      font-size: 1.5rem; color: #f87171; cursor: pointer;
+    }
+    #main {
+      flex: 1; display: flex; overflow: hidden;
+    }
+    #sequencer {
+      flex: 3; position: relative; padding: 1rem;
+      overflow: auto;
+    }
+    #settings {
+      flex: 1; background: #1a1a1a; padding: 1rem; overflow: auto;
+      border-left: 1px solid #333;
+    }
+    .controls {
+      margin-bottom: 1rem;
+      display: flex; gap: .5rem;
+      flex-wrap: wrap;
+    }
+    .controls button { padding: .5rem 1rem; background: #2563eb; border: none; color: #fff; border-radius: 4px; cursor: pointer; }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(var(--steps), 30px);
+      gap: 2px;
+      position: relative;
+    }
+    .cell {
+      width: 30px; height: 30px; background: #333;
+      border-radius: 4px; cursor: pointer;
+      transition: background .2s;
+    }
+    .cell.active { background: #4ade80; }
+    .cell.playing { box-shadow: inset 0 0 0 2px #facc15; }
+    #playhead {
+      position: absolute; top: 0; bottom: 0;
+      width: 30px; background: rgba(255,255,255,.2);
+      pointer-events: none;
+      transition: left 0.05s linear;
+    }
+    #settings h2 { margin-bottom: .5rem; }
+    .setting { margin-bottom: .75rem; }
+    .setting label { display: block; margin-bottom: .25rem; }
+    .setting input,
+    .setting select { width: 100%; padding: .25rem .5rem; border-radius: 4px; border: 1px solid #555; background: #222; color: #fff; }
+    #credit {
+      text-align: center; padding: .5rem;
+      font-size: 1.2rem; font-weight: bold;
+      background: linear-gradient(45deg,#ff00cc,#3333ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  </style>
+</head>
+<body>
+<div id="overlay">
+  <div id="header">
+    <h1>🎶 Beatmaker</h1>
+    <button id="closeBtn">✖</button>
+  </div>
+  <div id="main">
+    <div id="sequencer">
+      <div class="controls">
+        <button id="playBtn">▶ Play</button>
+        <button id="stopBtn">⏹ Stop</button>
+        <button id="clearBtn">🧹 Clear</button>
+        <button id="recordBtn">⏺ Record</button>
+      </div>
+      <div id="grid"></div>
+      <div id="playhead"></div>
+    </div>
+    <div id="settings">
+      <h2>Settings</h2>
+      <div class="setting">
+        <label for="tempo">Tempo (BPM)</label>
+        <input type="number" id="tempo" min="40" max="240" value="120">
+      </div>
+      <div class="setting">
+        <label for="steps">Steps</label>
+        <select id="steps">
+          <option>8</option><option selected>16</option><option>24</option><option>32</option>
+        </select>
+      </div>
+      <div class="setting">
+        <label for="volume">Volume</label>
+        <input type="range" id="volume" min="0" max="1" step="0.01" value="0.5">
+      </div>
+      <div class="setting">
+        <label for="instSelect">Add Instrument</label>
+        <select id="instSelect">
+          <option value="kick">Kick</option>
+          <option value="snare">Snare</option>
+          <option value="hihat">Hi-Hat</option>
+          <option value="clap">Clap</option>
+          <option value="tom">Tom</option>
+          <option value="crash">Crash</option>
+        </select>
+        <button id="addInst">Add</button>
+      </div>
+      <div id="credit">Created by J1mPPaZ</div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  const masterGain = audioCtx.createGain(); masterGain.gain.value = 0.5; masterGain.connect(audioCtx.destination);
+  const recDest = audioCtx.createMediaStreamDestination(); masterGain.connect(recDest);
+  let recorder, chunks = [];
+  const instruments = [];
+  let steps = 16, tempo=120;
+  let gridData = [];
+  let currentStep=0, isPlaying=false, timer;
+  const urls = {
+    kick: 'https://s3.amazonaws.com/freecodecamp/drums/RP4_KICK_1.mp3',
+    snare:'https://s3.amazonaws.com/freecodecamp/drums/Brk_Snr.mp3',
+    hihat:'https://s3.amazonaws.com/freecodecamp/drums/Cev_H2.mp3',
+    clap:'https://s3.amazonaws.com/freecodecamp/drums/Heater-6.mp3',
+    tom:'https://s3.amazonaws.com/freecodecamp/drums/side_stick_1.mp3',
+    crash:'https://s3.amazonaws.com/freecodecamp/drums/Dsc_Oh.mp3'
+  };
+  const gridEl=document.getElementById('grid'), playhead=document.getElementById('playhead');
+  const tempoIn=document.getElementById('tempo'), stepsIn=document.getElementById('steps'), volIn=document.getElementById('volume');
+  const playBtn=document.getElementById('playBtn'), stopBtn=document.getElementById('stopBtn'), clearBtn=document.getElementById('clearBtn');
+  const recordBtn=document.getElementById('recordBtn'), addInstBtn=document.getElementById('addInst');
+  function initRecorder(){recorder=new MediaRecorder(recDest.stream);recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=()=>{const b=new Blob(chunks,{type:'audio/webm'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='beat.webm';a.click();}};
+  function addInstrument(name){instruments.push(name);renderGrid();}
+  function renderGrid(){gridEl.innerHTML='';gridData=instruments.map(()=>Array(steps).fill(false));gridEl.style.setProperty('--steps',steps);
+    instruments.forEach((inst,row)=>{
+      gridData[row].forEach((on,col)=>{
+        const cell=document.createElement('div');cell.className='cell';
+        cell.onclick=()=>{gridData[row][col]=!gridData[row][col];cell.classList.toggle('active');playSound(name);
+        };
+        gridEl.appendChild(cell);
+      });
+    });}
+  function playSound(name){const src=audioCtx.createBufferSource();fetch(urls[name]).then(r=>r.arrayBuffer()).then(d=>audioCtx.decodeAudioData(d)).then(buf=>{src.buffer=buf;src.connect(masterGain);src.start();});}
+  function step(){gridEl.querySelectorAll('.cell').forEach(c=>c.classList.remove('playing'));
+    instruments.forEach((inst,row)=>{
+      const idx=row*steps+currentStep;
+      const cell=gridEl.children[idx];cell.classList.add('playing');
+      if(gridData[row][currentStep]) playSound(inst);
+    });
+    playhead.style.left=`${currentStep*32}px`;
+    currentStep=(currentStep+1)%steps;
+  }
+  playBtn.onclick=()=>{if(!isPlaying){isPlaying=true;timer=setInterval(step,60000/tempo/4);} };
+  stopBtn.onclick=()=>{isPlaying=false;clearInterval(timer);currentStep=0;gridEl.querySelectorAll('.cell').forEach(c=>c.classList.remove('playing'));};
+  clearBtn.onclick=()=>{gridEl.querySelectorAll('.cell.active').forEach(c=>c.classList.remove('active'));gridData=instruments.map(()=>Array(steps).fill(false));};
+  tempoIn.oninput=e=>{tempo=parseInt(e.target.value);};
+  stepsIn.onchange=e=>{steps=parseInt(e.target.value);renderGrid();};
+  volIn.oninput=e=>{masterGain.gain.value=parseFloat(e.target.value);};
+  addInstBtn.onclick=()=>{const sel=document.getElementById('instSelect');addInstrument(sel.value);};
+  document.getElementById('closeBtn').onclick=()=>{clearInterval(timer);document.getElementById('overlay').remove();};
+  initRecorder();recordBtn.onclick=()=>{if(recordBtn.textContent.includes('Record')){chunks=[];recorder.start();recordBtn.textContent='⏹ Stop';}else{recorder.stop();recordBtn.textContent='⏺ Record';}};
+  // start with default instruments
+  ['kick','snare','hihat'].forEach(addInstrument);
+})();
+</script>
+</body>
+</html>
